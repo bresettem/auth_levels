@@ -1,13 +1,12 @@
 //jshint esversion:6
+require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const ejs = require("ejs");
 const app = express();
 const pg = require("pg");
-
 const port = 3000;
-const SECRET_KEY = "Itisonlyasecret.";
-
+console.log(process.env.SECRET_KEY);
 const db = new pg.Client({
   user: "brese",
   host: "localhost",
