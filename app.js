@@ -5,6 +5,9 @@ const ejs = require("ejs");
 const app = express();
 const pg = require("pg");
 
+const port = 3000;
+const SECRET_KEY = "Itisonlyasecret.";
+
 const db = new pg.Client({
   user: "brese",
   host: "localhost",
@@ -14,6 +17,14 @@ const db = new pg.Client({
 });
 
 db.connect();
+
+db.query("CREATE EXTENSION IF NOT EXISTS pgcrypto;", (err, res) => {
+  if (err) {
+    console.error(err.message);
+  } else {
+    console.log("pgcrypto extension enabled");
+  }
+});
 
 app.use(express.static("public"));
 app.set("view engine", "ejs");
@@ -49,10 +60,10 @@ app.post("/register", async function (req, res) {
         message: "The email already exists, try again.",
       });
     } else {
-      await db.query("INSERT INTO users (email, password) VALUES ($1, $2)", [
-        username,
-        password,
-      ]);
+      await db.query(
+        `INSERT INTO users (email, password) VALUES ($1, pgp_sym_encrypt($2, '${SECRET_KEY}'))`,
+        [username, password]
+      );
       res.render("secrets");
     }
   } catch (error) {
@@ -68,12 +79,13 @@ app.post("/login", async function (req, res) {
   const password = req.body.password;
 
   try {
-    const results = await db.query("SELECT * FROM users WHERE email = $1", [
-      username,
-    ]);
-    const user = results.rows[0];
+    const results =
+      'SELECT email, pgp_sym_decrypt(password::bytea, $2) AS "decryptedPassword" FROM users WHERE email = $1';
+    const values = [username, SECRET_KEY];
+    const user = (await db.query(results, values)).rows[0];
     if (user) {
-      if (password == user.password) {
+      console.log("user", user);
+      if (password == user.decryptedPassword) {
         res.render("secrets");
       } else {
         res.render("login", {
@@ -91,6 +103,6 @@ app.post("/login", async function (req, res) {
   }
 });
 
-app.listen(3000, function () {
-  console.log("Server started on port 3000.");
+app.listen(port, function () {
+  console.log(`Server started on port 3000.`);
 });
