@@ -31,7 +31,7 @@ Authentication Level-4:Register & Login using password hashing/ salting with bcr
 
 Authentication Level-5: Using passport, express-session & sequelize to add Cookies & sessions to insure authenticate and de-authenticate users credentials with starts and expiries of users login sessions and server restarts:
 
-1. Installing & importing the relevant packages express-session, passport, passport-local, sequelize & connect-flash.
+1. Installing & requiring the relevant packages express-session, passport, passport-local, sequelize & connect-flash.
 2. Set up & initialize the session including the cookies properties.
 3. Set Up Sequelize and create User Model with PostgreSQL
 4. Initialize and start using passport
