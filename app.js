@@ -1,20 +1,20 @@
 //jshint esversion:6
-require("dotenv").config();
-const express = require("express");
-const bodyParser = require("body-parser");
-const ejs = require("ejs");
-const app = express();
-const pg = require("pg");
-const bcrypt = require("bcrypt");
-const session = require("express-session");
-const passport = require("passport");
-const LocalStrategy = require("passport-local").Strategy;
-const Sequelize = require("sequelize");
-const flash = require("connect-flash");
-const GoogleStrategy = require("passport-google-oauth20").Strategy;
+import env from "dotenv";
+import express from "express";
+import bodyParser from "body-parser";
+import pg from "pg";
+import bcrypt from "bcrypt";
+import session from "express-session";
+import passport from "passport";
+import { Strategy } from "passport-local";
+import Sequelize from "sequelize";
+import flash from "connect-flash";
+import GoogleStrategy from "passport-google-oauth20";
 
+const app = express();
 const port = 3000;
 const saltRounds = 10;
+env.config();
 
 app.use(express.static("public"));
 app.set("view engine", "ejs");
@@ -26,7 +26,7 @@ app.use(
 
 app.use(
   session({
-    secret: process.env.SECRET_KEY,
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -38,12 +38,17 @@ app.use(
 );
 
 // --------- Set Up Sequelize with PostgreSQL
-const sequelize = new Sequelize("userdb", "brese", "Hello123", {
-  host: "localhost",
-  dialect: "postgres",
-  port: 5432,
-  logging: false, // Disables logging
-});
+const sequelize = new Sequelize(
+  process.env.PG_DATABASE,
+  process.env.PG_USER,
+  process.env.PG_PASSWORD,
+  {
+    host: process.env.PG_HOST,
+    dialect: "postgres",
+    port: 5432,
+    logging: false, // Disables logging
+  }
+);
 
 // --------- Create a User Model
 const User = sequelize.define(
@@ -71,11 +76,11 @@ const User = sequelize.define(
     },
     externalid: {
       type: Sequelize.STRING(512),
-      allowNull: false,
+      allowNull: true,
     },
     idsource: {
       type: Sequelize.STRING(50),
-      allowNull: false,
+      allowNull: true,
     },
   },
   {
@@ -93,7 +98,7 @@ app.use(passport.session());
 
 // ---------- Configure Passport Local Strategy ----------
 passport.use(
-  new LocalStrategy(
+  new Strategy(
     {
       usernameField: "username", // Specify the field name that holds the email
       passwordField: "password", // Specify the field name that holds the password
@@ -148,8 +153,8 @@ passport.deserializeUser((id, done) => {
 passport.use(
   new GoogleStrategy(
     {
-      clientID: process.env.CLIENT_ID,
-      clientSecret: process.env.CLIENT_SECRET,
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       // userProfileURL: 'https://www.googleapis.com/oauth2/v3/userinfo',
       callbackURL: "http://localhost:3000/auth/google/secrets",
     },
