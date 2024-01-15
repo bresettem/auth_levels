@@ -29,180 +29,104 @@ app.use(
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 1000 * 60 * 60 * 24, // Optional: cookie expiry
-    },
+    // cookie: {
+    //   httpOnly: true,
+    //   secure: process.env.NODE_ENV === "production",
+    //   maxAge: 1000 * 60 * 60 * 24, // Optional: cookie expiry
+    // },
   })
 );
 
-// --------- Set Up Sequelize with PostgreSQL
-const sequelize = new Sequelize(
-  process.env.PG_DATABASE,
-  process.env.PG_USER,
-  process.env.PG_PASSWORD,
-  {
-    host: process.env.PG_HOST,
-    dialect: "postgres",
-    port: 5432,
-    logging: false, // Disables logging
-  }
-);
-
-// --------- Create a User Model
-const User = sequelize.define(
-  "user",
-  {
-    id: {
-      type: Sequelize.INTEGER,
-      autoIncrement: true,
-      primaryKey: true,
-    },
-    email: {
-      type: Sequelize.STRING(50),
-      allowNull: false,
-      unique: true,
-      validate: {
-        notEmpty: true,
-      },
-    },
-    password: {
-      type: Sequelize.STRING(512),
-      allowNull: false,
-      validate: {
-        notEmpty: true,
-      },
-    },
-    externalid: {
-      type: Sequelize.STRING(512),
-      allowNull: true,
-    },
-    idsource: {
-      type: Sequelize.STRING(50),
-      allowNull: true,
-    },
-  },
-  {
-    timestamps: false,
-    tableName: "users",
-    freezeTableName: true,
-  }
-);
-
-sequelize.sync(); // This line will create the table if it does not exist
+const db = new pg.Client({
+  user: process.env.PG_USER,
+  host: process.env.PG_HOST,
+  database: process.env.PG_DATABASE,
+  password: process.env.PG_PASSWORD,
+  port: process.env.PG_PORT,
+});
+db.connect();
 
 app.use(flash());
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ---------- Configure Passport Local Strategy ----------
+//  Configure Passport Local Strategy
 passport.use(
-  new Strategy(
-    {
-      usernameField: "username", // Specify the field name that holds the email
-      passwordField: "password", // Specify the field name that holds the password
-    },
-    async (username, password, done) => {
-      try {
-        // Find the user by email instead of username
-        const user = await User.findOne({ where: { email: username } });
-        if (!user) {
-          return done(null, false, {
-            message: "The username is not correct, try again!",
-          });
-        }
-
-        // Compare the provided password with the stored hashed password
-        const match = await bcrypt.compare(password, user.password);
-        if (!match) {
-          return done(null, false, {
-            message: "The password is not correct, try again!",
-          });
-        }
-
-        return done(null, user);
-      } catch (error) {
-        return done(null, false, {
-          message: "An error occurred, please try again.",
+  "local",
+  new Strategy(async function verify(username, password, cb) {
+    try {
+      const result = await db.query("SELECT * FROM users WHERE email = $1 ", [
+        username,
+      ]);
+      if (result.rows.length > 0) {
+        const user = result.rows[0];
+        const storedHashedPassword = user.password;
+        bcrypt.compare(password, storedHashedPassword, (err, valid) => {
+          if (err) {
+            console.error("Error comparing passwords:", err);
+            return cb(err);
+          } else {
+            if (valid) {
+              return cb(null, user);
+            } else {
+              return cb(null, false);
+            }
+          }
         });
+      } else {
+        return cb("User not found");
       }
+    } catch (err) {
+      console.log(err);
     }
-  )
+  })
 );
 
 passport.serializeUser((user, done) => {
   done(null, user.id);
 });
 
-passport.deserializeUser((id, done) => {
-  User.findByPk(id)
-    .then((user) => {
-      if (user) {
-        done(null, user);
-      } else {
-        done(null, false); // or handle invalid user
-      }
-    })
-    .catch((error) => {
-      done(error, null);
-    });
+passport.deserializeUser((user, cb) => {
+  cb(null, user);
 });
 
-// -------- Setup Google Strategy --------
+//  Setup Google Strategy
 passport.use(
+  "google",
   new GoogleStrategy(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      // userProfileURL: 'https://www.googleapis.com/oauth2/v3/userinfo',
       callbackURL: "http://localhost:3000/auth/google/secrets",
+      userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo",
     },
-    async function (accessToken, refreshToken, profile, cb) {
+    async (accessToken, refreshToken, profile, cb) => {
       try {
-        // Generate a random password for Google authenticated users
-        const password = Array(16)
-          .fill(null)
-          .map(() => Math.random().toString(36).charAt(2))
-          .join("");
-
-        // Hash the generated password
-        const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-        // Find or create user based on Google profile ID
-        const [user, created] = await User.findOrCreate({
-          where: { externalid: profile.id },
-          defaults: {
-            // Other defaults if necessary
-            email: profile.emails[0].value,
-            password: hashedPassword, // Hashed password
-            externalid: profile.id,
-            idsource: "Google",
-          },
-        });
-
-        if (created) {
-          // User was created
-          return cb(null, user);
+        const result = await db.query("SELECT * FROM users WHERE email = $1", [
+          profile.emails[0].value,
+        ]);
+        if (result.rows.length === 0) {
+          const newUser = await db.query(
+            "INSERT INTO users (email, password) VALUES ($1, $2)",
+            [profile.emails[0].value, "google"]
+          );
+          return cb(null, newUser.rows[0]);
         } else {
-          // User already existed
-          return cb(null, user);
+          return cb(null, result.rows[0]);
         }
       } catch (err) {
-        // Handle errors more gracefully
-        console.error("Error during Google authentication:", err);
         return cb(err);
       }
     }
   )
 );
 
-//  ---------------- Render Home Page -------------------
+//   Render Home Page -
 app.get("/", (req, res) => {
   res.render("home");
 });
 
-//  ---------------- Render Google Auth -------------------
+//   Render Google Auth -
 app.get(
   "/auth/google",
   passport.authenticate("google", { scope: ["profile", "email"] })
@@ -217,54 +141,52 @@ app.get(
   }
 );
 
-//  --------------- Render Register Page --------------------
+// Render Register Page
 app.get("/register", (req, res) => {
   res.render("register");
 });
 
-//  ------------- Post Register Information -----------------
+// Post Register Information
 app.post("/register", async (req, res) => {
-  const { username, password } = req.body; // Assuming 'username' is the user's email
+  const email = req.body.username;
+  const password = req.body.password;
 
   try {
-    // Check if the email already exists
-    const existingUser = await User.findOne({ where: { email: username } });
-    if (existingUser) {
-      return res.render("register", {
-        message: "The Email already exists, choose another!",
+    const checkResult = await db.query("SELECT * FROM users WHERE email = $1", [
+      email,
+    ]);
+
+    if (checkResult.rows.length > 0) {
+      req.redirect("/login");
+    } else {
+      bcrypt.hash(password, saltRounds, async (err, hash) => {
+        if (err) {
+          console.error("Error hashing password:", err);
+        } else {
+          const result = await db.query(
+            "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
+            [email, hash]
+          );
+          const user = result.rows[0];
+          req.login(user, (err) => {
+            console.log("success");
+            res.redirect("/secrets");
+          });
+        }
       });
     }
-
-    // Create a new user with the hashed password
-    const newUser = await User.create({
-      email: username,
-      password: await bcrypt.hash(password, saltRounds), // Hashing the password inline
-    });
-
-    // Logging in the user using Passport
-    req.login(newUser, (error) => {
-      if (error) {
-        console.log(error.message);
-        return res.render("register", {
-          message: "An error occurred, please try again.",
-        });
-      } else {
-        return res.redirect("/secrets");
-      }
-    });
-  } catch (error) {
-    console.log(error.message);
-    res.render("register", { message: "An error occurred, please try again." });
+  } catch (err) {
+    console.log(err);
   }
 });
 
-//  -------------- Render Login Page --------------------
+//   Render Login Page
 app.get("/login", (req, res) => {
   const messages = req.flash("error"); // Assign flash messages to const to pass it as object in render
   res.render("login", { messages: messages });
 });
 
-//  ------------ Post Login Information ------------------
+//   Post Login Information
 app.post(
   "/login",
   passport.authenticate("local", {
@@ -276,17 +198,58 @@ app.post(
   }
 );
 
-//  ------------ Secrets Route ------------------
-app.get("/secrets", (req, res) => {
+//   Secrets Route
+app.get("/secrets", async (req, res) => {
   if (req.isAuthenticated()) {
-    res.render("secrets");
+    try {
+      const userId = req.session.passport.user;
+      //TODO: Update this to pull in the user secret to render in secrets.ejs
+      const userSecrets = await db.query(
+        "SELECT secret FROM users WHERE id = $1",
+        [userId]
+      );
+      const result = userSecrets.rows[0];
+      res.render("secrets", { secret: result.secret });
+    } catch (error) {
+      console.error(error);
+    }
   } else {
-    res.cookie("connect.sid", "", { expires: new Date(0) });
+    // res.cookie("connect.sid", "", { expires: new Date(0) });
     res.redirect("/login");
   }
 });
 
-//  ------------ Logout Route ------------------
+app.get("/submit", (req, res) => {
+  if (req.isAuthenticated()) {
+    res.render("submit");
+  } else {
+    // res.cookie("connect.sid", "", { expires: new Date(0) });
+    res.redirect("/login");
+  }
+});
+
+//TODO: Create the post route for submit.
+//Handle the submitted data and add it to the database
+
+app.post("/submit", async (req, res) => {
+  if (req.isAuthenticated()) {
+    try {
+      const secret = req.body.secret;
+      const userId = req.session.passport.user;
+      await db.query("UPDATE users INT SET secret = $1 WHERE id = $2", [
+        secret,
+        userId,
+      ]);
+      res.render("secrets", { secret: secret });
+    } catch (error) {
+      console.error("Error! ", error);
+    }
+  } else {
+    // res.cookie("connect.sid", "", { expires: new Date(0) });
+    res.redirect("/login");
+  }
+});
+//   Logout Route
 app.get("/logout", (req, res) => {
   req.logout(function (error) {
     // Passport's method to log out the user
@@ -294,7 +257,7 @@ app.get("/logout", (req, res) => {
       console.log(error.message);
       return next(error);
     }
-    res.cookie("connect.sid", "", { expires: new Date(0) });
+    // res.cookie("connect.sid", "", { expires: new Date(0) });
     res.redirect("/"); // Redirect to the homepage or login page after logout
   });
 });
